@@ -1,80 +1,34 @@
-<p align="center">
-<img width="300" src="assets/logo.png">
-</p>
+# NanoQoS
 
-<p align="center">
-<a href="https://trendshift.io/repositories/15323" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15323" alt="GeeeekExplorer%2Fnano-vllm | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-</p>
+基于 [nano-vLLM](https://github.com/GeeeekExplorer/nano-vllm) 的在线推理调度与性能测量项目。NanoQoS 在原有推理引擎上实现了请求级调度、HTTP 服务和可复现的负载测试；它不是从零实现的 vLLM。
 
-# Nano-vLLM
+## 本项目新增
 
-A lightweight vLLM implementation built from scratch.
+- FCFS、短任务优先和 SLO 截止时间优先三种等待队列策略，含 aging 与 prefill/decode 公平性控制。
+- 有界请求队列、取消、超时、补全及聊天接口、SSE 流式输出。
+- TTFT、TPOT、E2E、输出吞吐、SLO goodput、prefix cache 与 KV block 指标。
+- 固定随机种子的突发／泊松到达负载、策略对比脚本及 CPU 单元与 HTTP 集成测试。
 
-## NanoQoS extension
+模型、FlashAttention、Paged KV Cache、prefix caching、chunked prefill、CUDA Graph 和 tensor parallel 的底层实现来自上游 nano-vLLM。本项目对 `Sequence`、`Scheduler`、`BlockManager` 和 `LLMEngine` 做了扩展，新增的服务、测量与测试代码见 [`nanovllm/server.py`](nanovllm/server.py)、[`nanovllm/metrics.py`](nanovllm/metrics.py)、[`benchmarks/`](benchmarks/) 和 [`tests/`](tests/)。上游版权与许可见 [`LICENSE`](LICENSE)。
 
-This checkout adds an experimental online-serving and measurement layer to the
-original [nano-vLLM](https://github.com/GeeeekExplorer/nano-vllm). The new code
-adds request-level latency and cache metrics, selectable `fcfs` / `shortest` /
-`slo` admission order, aging, a bounded HTTP request queue, cancellation,
-streaming completions, and a reproducible arrival-based benchmark. The model,
-attention kernels, CUDA graphs and tensor parallel layers below are from the
-upstream project. See [the extension guide](docs/NANOQOS.md) for architecture,
-commands, metric definitions, and verification status.
+## 运行
 
-The performance table further down is the upstream README's RTX 4070 result;
-it is **not** a measurement of this extension or this machine.
-
-## Key Features
-
-* 🚀 **Fast offline inference** - Comparable inference speeds to vLLM
-* 📖 **Readable codebase** - Clean implementation in ~ 1,200 lines of Python code
-* ⚡ **Optimization Suite** - Prefix caching, Tensor Parallelism, Torch compilation, CUDA graph, etc.
-
-## Installation
+真实模型推理需要 Linux/WSL2、NVIDIA GPU、NCCL、Triton 和 FlashAttention。安装后可运行：
 
 ```bash
-pip install git+https://github.com/GeeeekExplorer/nano-vllm.git
+python -m pip install -e .
+python -m nanovllm.server --model ./Qwen --host 127.0.0.1 --port 8000 --eager
 ```
 
-## Model Download
+CPU 环境可先验证调度与指标管线：
 
-To download the model weights manually, use the following command:
 ```bash
-huggingface-cli download --resume-download Qwen/Qwen3-0.6B \
-  --local-dir ~/huggingface/Qwen3-0.6B/ \
-  --local-dir-use-symlinks False
+python -m pytest tests -q
+python -m benchmarks.run --backend synthetic --requests 24 --policy fcfs --output results/fcfs.json
 ```
 
-## Quick Start
+然后使用相同参数分别运行 `--policy shortest` 与 `--policy slo`，通过 `python -m benchmarks.compare` 比较 JSON 结果。完整参数、接口示例、指标口径和环境要求见 [NanoQoS 使用与实验说明](docs/NANOQOS.md)。
 
-See `example.py` for usage. The API mirrors vLLM's interface with minor differences in the `LLM.generate` method:
-```python
-from nanovllm import LLM, SamplingParams
-llm = LLM("/YOUR/MODEL/PATH", enforce_eager=True, tensor_parallel_size=1)
-sampling_params = SamplingParams(temperature=0.6, max_tokens=256)
-prompts = ["Hello, Nano-vLLM."]
-outputs = llm.generate(prompts, sampling_params)
-outputs[0]["text"]
-```
+## 验证状态
 
-## Benchmark
-
-See `bench.py` for benchmark.
-
-**Test Configuration:**
-- Hardware: RTX 4070 Laptop (8GB)
-- Model: Qwen3-0.6B
-- Total Requests: 256 sequences
-- Input Length: Randomly sampled between 100–1024 tokens
-- Output Length: Randomly sampled between 100–1024 tokens
-
-**Performance Results:**
-| Inference Engine | Output Tokens | Time (s) | Throughput (tokens/s) |
-|----------------|-------------|----------|-----------------------|
-| vLLM           | 133,966     | 98.37    | 1361.84               |
-| Nano-vLLM      | 133,966     | 93.41    | 1434.13               |
-
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=GeeeekExplorer/nano-vllm&type=Date)](https://www.star-history.com/#GeeeekExplorer/nano-vllm&Date)
+目前 9 个测试在本地通过，CPU 合成负载可生成指标。当前 Windows 环境缺少 NCCL、Triton 与 FlashAttention，尚未完成真实 GPU 推理和性能对照；CPU 合成吞吐不是模型推理性能数据。
