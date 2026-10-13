@@ -5,7 +5,7 @@
 | 验证项 | 当前状态 | 可复现入口 | 能证明什么 |
 | --- | --- | --- | --- |
 | 调度、KV cache、指标单元测试 | 本地通过 | `python -m pytest tests -q` | 受测状态转换与计算口径 |
-| Python 安装包元数据与 wheel | 本地通过 | `python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .` | 可构建包含源码与原始 MIT 许可证的安装包 |
+| Python 安装包元数据与 wheel | 本地通过 | `python -m pip wheel --no-deps --wheel-dir dist .` | 可构建包含源码与原始 MIT 许可证的安装包 |
 | HTTP 补全、聊天 SSE、指标集成测试 | 本地通过（假模型） | `tests/test_server.py` | 服务协议、事件流与指标管线 |
 | 三策略 CPU 合成负载 | 本地通过 | `python -m benchmarks.run --backend synthetic ...` | 工作负载可生成、调度可推进、结果可比较 |
 | Linux/Windows CPU 自动回归 | 工作流已配置；以 GitHub Actions 当次状态为准 | [CPU validation](../.github/workflows/ci.yml) | 在独立环境重复上述检查 |

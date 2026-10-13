@@ -25,7 +25,7 @@ jobs:
       - name: Install CPU and test dependencies
         run: python -m pip install -e ".[test]"
       - name: Build installable wheel
-        run: python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
+        run: python -m pip wheel --no-deps --wheel-dir dist .
       - name: Run unit and HTTP integration tests
         run: python -m pytest tests -q
       - name: Run synthetic scheduler smoke test
