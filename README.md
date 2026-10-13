@@ -1,5 +1,7 @@
 # NanoQoS
 
+[![CPU validation](https://github.com/Atyinzi/NanoQoS/actions/workflows/ci.yml/badge.svg)](https://github.com/Atyinzi/NanoQoS/actions/workflows/ci.yml)
+
 基于 [nano-vLLM](https://github.com/GeeeekExplorer/nano-vllm) 的在线推理调度与性能测量项目。项目把原本偏离线的推理执行链扩展为可接收动态请求、观测请求级延迟、比较调度策略的实验平台。底层 Qwen3 模型、注意力内核、Paged KV Cache、CUDA Graph 等来自上游；NanoQoS 的新增范围和验证边界在下文明确列出。
 
 ## 解决什么问题
@@ -46,7 +48,7 @@ GPU benchmark 命令、固定实验条件与接口示例见 [技术说明](docs/
 
 ## 验证范围
 
-本地已通过 9 个 CPU 单元／HTTP 集成测试，并运行 CPU 合成负载。GPU 路径尚未在本机验收：当前 Windows Python 有 CUDA PyTorch，但缺少 NCCL、Triton 和 FlashAttention。因此本仓库目前**没有可声称的真实 GPU 加速或 SLO 改善数字**；待 GPU 实验完成后再补充设备、模型、负载、重复次数与原始结果。详细验收矩阵见 [验证记录](docs/VALIDATION.md)。
+本地已通过 9 个 CPU 单元／HTTP 集成测试，并运行 CPU 合成负载。[2026-10-13 的 CI 验证](https://github.com/Atyinzi/NanoQoS/actions/runs/38405730903)在 Linux/Windows、Python 3.11/3.12 四组环境全部通过。GPU 路径尚未在本机验收：当前 Windows Python 有 CUDA PyTorch，但缺少 NCCL、Triton 和 FlashAttention。因此本仓库目前**没有可声称的真实 GPU 加速或 SLO 改善数字**；待 GPU 实验完成后再补充设备、模型、负载、重复次数与原始结果。详细验收矩阵见 [验证记录](docs/VALIDATION.md)。
 
 ## 来源与许可
 
