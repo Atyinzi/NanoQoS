@@ -1,0 +1,41 @@
+name: CPU validation
+
+"on":
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install CPU and test dependencies
+        run: python -m pip install -e ".[test]"
+      - name: Build installable wheel
+        run: python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
+      - name: Run unit and HTTP integration tests
+        run: python -m pytest tests -q
+      - name: Run synthetic scheduler smoke test
+        shell: bash
+        run: |
+          for policy in fcfs shortest slo; do
+            python -m benchmarks.run --backend synthetic --requests 24 --arrivals burst \
+              --seed 7 --max-input 64 --max-output 16 --shared-prefix 16 \
+              --block-size 8 --num-blocks 128 --max-num-batched-tokens 64 \
+              --deadline 0.1 --deadline-jitter 0.05 \
+              --policy "$policy" --output "results/$policy.json" > /dev/null
+          done
+          python -m benchmarks.compare results/fcfs.json results/shortest.json results/slo.json

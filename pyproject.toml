@@ -6,17 +6,23 @@ build-backend = "setuptools.build_meta"
 name = "nanoqos"
 version = "0.1.0"
 maintainers = [{ name = "Atyinzi" }]
-license = "MIT"
-license-files = ["LICENSE"]
+license = { file = "LICENSE" }
 readme = "README.md"
 description = "Online inference scheduling and measurement built on nano-vLLM"
 requires-python = ">=3.10,<3.13"
 dependencies = [
+    "numpy>=1.24",
+    "xxhash",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+gpu = [
     "torch>=2.4.0",
     "triton>=3.0.0",
     "transformers>=4.51.0",
     "flash-attn",
-    "xxhash",
 ]
 
 [project.urls]

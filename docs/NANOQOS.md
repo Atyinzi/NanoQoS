@@ -9,16 +9,17 @@
 ## 运行环境
 
 - GPU 路径需要 Linux 或 WSL2、可用的 NVIDIA CUDA/NCCL，以及本项目 `pyproject.toml` 中的依赖。原引擎在初始化时调用 NCCL、Triton 和 FlashAttention。
-- CPU 仿真路径只需要 Python、`numpy`、`xxhash` 和 `pytest`（后者仅测试时使用）。仿真会运行真实 `Scheduler`/`BlockManager`，以定时睡眠代替模型计算；它验证功能与指标管线，不代表 GPU 性能。
+- CPU 仿真路径只需要 Python 和 `pip install -e ".[test]"` 安装的轻量依赖。仿真会运行真实 `Scheduler`/`BlockManager`，以定时睡眠代替模型计算；它验证功能与指标管线，不代表 GPU 性能。
 - 本机 Windows Python 有 CUDA PyTorch 但没有 NCCL、Triton、FlashAttention，因此目前已验证 CPU 仿真与本地 HTTP 假模型集成测试，尚未取得真实 GPU 推理数字。
 - 本地 `Qwen/` 为 Qwen3-0.6B 权重目录；已在 `.gitignore` 中忽略，避免误提交大文件。
 
-在可用的 Linux GPU 环境中，从项目根目录安装依赖：
+CPU 测试与仿真可在项目根目录安装：
 
 ```bash
-python -m pip install -e .
-python -m pip install pytest
+python -m pip install -e ".[test]"
 ```
+
+真实 GPU 路径的依赖列在 `pyproject.toml` 的 `gpu` extra；需要先准备兼容 CUDA 的 PyTorch/NCCL 与编译环境，再安装 Triton、Transformers、FlashAttention。FlashAttention 的构建方式随 CUDA/PyTorch 组合而变化，需在目标环境确认安装成功；本机尚未验证这一步。
 
 ## 先跑测试与 CPU 仿真
 
