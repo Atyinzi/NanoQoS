@@ -49,7 +49,7 @@ python -m benchmarks.run --backend gpu --model ./Qwen --attention-backend sdpa -
 
 ## 验证范围
 
-本地已通过 21 个单元／HTTP 集成测试（其中 3 个 SDPA 数值测试需要 PyTorch），并运行 CPU 合成负载。[此前代码的 CI 验证](https://github.com/Atyinzi/NanoQoS/actions/runs/38566582283)在 Linux/Windows、Python 3.11/3.12 四组环境全部通过；本次后端变更的 CI 状态以最新 Actions 为准。SDPA 在 WSL 的 RTX 3050 上已完成单请求、分块 Prefill 加 Decode 冒烟；FlashAttention 路径仍未验收。因此本仓库目前**没有可声称的 GPU 加速或 SLO 改善数字**；需更严格的正确性和多轮同条件性能实验。详细验收矩阵见 [验证记录](docs/VALIDATION.md)。
+本地和 WSL 已通过 21 个单元／HTTP 集成测试（其中 3 个 SDPA 数值测试需要 PyTorch），并运行 CPU 合成负载。[本次后端改动的 CI 验证](https://github.com/Atyinzi/NanoQoS/actions/runs/38577198821)在 Linux/Windows、Python 3.11/3.12 四组环境全部通过（无 PyTorch 的 CI 环境跳过可选 SDPA 数值测试）。SDPA 在 WSL 的 RTX 3050 上已完成单请求、分块 Prefill 加 Decode 冒烟；FlashAttention 路径仍未验收。因此本仓库目前**没有可声称的 GPU 加速或 SLO 改善数字**；需更严格的正确性和多轮同条件性能实验。详细验收矩阵见 [验证记录](docs/VALIDATION.md)。
 
 ## 来源与许可
 
