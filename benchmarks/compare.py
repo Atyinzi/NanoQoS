@@ -14,6 +14,10 @@ def main():
     for run in runs[1:]:
         if any(run[key] != reference[key] for key in ("backend", "model", "workload", "engine")):
             parser.error("all result files must have the same backend, model, workload and engine settings")
+        if run.get("workload_sha256") != reference.get("workload_sha256"):
+            parser.error("workload fingerprints differ")
+        if run.get("environment", {}).get("git_commit") != reference.get("environment", {}).get("git_commit"):
+            parser.error("code revisions differ")
     print("policy       tok/s    TTFT p99 ms    TPOT p99 ms    SLO goodput tok/s    preemptions")
     for run in runs:
         metrics = run["metrics"]

@@ -1,11 +1,14 @@
 """Arrival based benchmark. The synthetic backend tests scheduler behavior, not GPU speed."""
 
 import argparse
+import hashlib
 import json
 import platform
 import random
+import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from importlib import metadata
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,6 +24,30 @@ class Request:
     prompt: list[int]
     max_tokens: int
     deadline_seconds: float | None
+
+
+def workload_sha256(requests: list[Request]) -> str:
+    payload = json.dumps([asdict(request) for request in requests],
+                         sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def git_commit() -> str | None:
+    try:
+        result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                                text=True, timeout=5, check=False)
+        return result.stdout.strip() if result.returncode == 0 else None
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+
+def git_dirty() -> bool | None:
+    try:
+        result = subprocess.run(["git", "status", "--porcelain"], capture_output=True,
+                                text=True, timeout=5, check=False)
+        return bool(result.stdout) if result.returncode == 0 else None
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
 
 
 def make_workload(count: int, seed: int, mode: str, rate: float,
@@ -75,6 +102,7 @@ def run(args):
                      kvcache_block_size=args.block_size,
                      gpu_memory_utilization=args.gpu_memory_utilization)
     start = time.perf_counter()
+    started_at_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     next_request = 0
     try:
         while next_request < len(requests) or not (scheduler or engine).is_finished():
@@ -105,9 +133,12 @@ def run(args):
                 engine.step_events()
         elapsed = time.perf_counter() - start
         result = {
+            "schema_version": 1,
             "backend": args.backend,
             "model": str(args.model) if args.backend == "gpu" else None,
             "policy": args.policy,
+            "workload_sha256": workload_sha256(requests),
+            "started_at_utc": started_at_utc,
             "workload": {"requests": args.requests, "seed": args.seed, "arrivals": args.arrivals,
                          "rate": args.rate, "shared_prefix": args.shared_prefix,
                          "max_input": args.max_input, "max_output": args.max_output,
@@ -117,8 +148,13 @@ def run(args):
                        "max_model_len": args.max_model_len,
                        "block_size": (scheduler or engine.scheduler).block_manager.block_size,
                        "num_blocks": len((scheduler or engine.scheduler).block_manager.blocks),
-                       "eager": args.eager},
-            "environment": {"python": platform.python_version(), "platform": platform.platform()},
+                       "eager": args.eager,
+                       "gpu_memory_utilization": args.gpu_memory_utilization if engine else None,
+                       "prefill_seconds": args.prefill_seconds if scheduler else None,
+                       "decode_seconds": args.decode_seconds if scheduler else None},
+            "environment": {"python": platform.python_version(),
+                            "platform": platform.platform(), "git_commit": git_commit(),
+                            "git_dirty": git_dirty()},
             "kv_cache": {
                 "peak_used_blocks": (scheduler or engine.scheduler).block_manager.peak_used_blocks,
                 "cache_hits": (scheduler or engine.scheduler).block_manager.cache_hits,
@@ -130,6 +166,17 @@ def run(args):
             import torch
             result["environment"]["torch"] = torch.__version__
             result["environment"]["gpu"] = torch.cuda.get_device_name(0)
+            result["environment"]["cuda_runtime"] = torch.version.cuda
+            result["environment"]["gpu_total_bytes"] = torch.cuda.get_device_properties(0).total_memory
+            for package in ("triton", "flash-attn", "transformers"):
+                try:
+                    result["environment"][package] = metadata.version(package)
+                except metadata.PackageNotFoundError:
+                    result["environment"][package] = None
+            config_file = args.model / "config.json"
+            if config_file.is_file():
+                result["environment"]["model_config_sha256"] = hashlib.sha256(
+                    config_file.read_bytes()).hexdigest()
             result["environment"]["peak_cuda_bytes"] = torch.cuda.max_memory_allocated()
         return result
     finally:
@@ -166,6 +213,8 @@ def main():
     args = parser.parse_args()
     if args.backend == "gpu" and args.max_input + args.max_output > args.max_model_len:
         parser.error("max-input + max-output exceeds max-model-len")
+    if args.backend == "synthetic" and args.max_input + args.max_output - 1 > args.block_size * args.num_blocks:
+        parser.error("largest request cannot fit in the synthetic KV cache")
     if args.backend == "synthetic" and args.shared_prefix and args.shared_prefix < args.block_size:
         parser.error("shared-prefix must cover at least one full block to measure reuse")
     result = run(args)

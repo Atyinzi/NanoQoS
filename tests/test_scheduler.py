@@ -1,3 +1,4 @@
+import random
 from time import perf_counter
 from types import SimpleNamespace
 import pytest
@@ -42,6 +43,78 @@ def test_prefix_reuse_and_release():
     assert second.num_scheduled_tokens == 2
     service.postprocess(batch, [99], prefill)
     assert second.is_finished
+
+
+def test_chunked_prefill_allocates_kv_blocks_incrementally():
+    service = scheduler(blocks=4, budget=8)
+    item = seq(24, output=1)
+    service.add(item)
+
+    for expected_blocks in (1, 2, 3):
+        batch, prefill = service.schedule()
+        assert prefill and batch == [item]
+        assert item.num_scheduled_tokens == 8
+        assert len(item.block_table) == expected_blocks
+        service.postprocess(batch, [99], prefill)
+
+    assert item.is_finished
+    assert service.block_manager.peak_used_blocks == 3
+    assert len(service.block_manager.free_block_ids) == 4
+
+
+def test_chunked_prefill_can_continue_across_partial_block_boundaries():
+    service = scheduler(blocks=3, budget=5)
+    item = seq(17, output=1)
+    service.add(item)
+    for scheduled, blocks in ((5, 1), (5, 2), (5, 2), (2, 3)):
+        batch, prefill = service.schedule()
+        assert prefill and batch == [item]
+        assert item.num_scheduled_tokens == scheduled
+        assert len(item.block_table) == blocks
+        service.postprocess(batch, [99], prefill)
+    assert item.is_finished
+
+
+def test_last_decode_preemption_retries_waiting_prefill():
+    service = scheduler(blocks=2, budget=8)
+    decoding = seq(8, output=2)
+    service.add(decoding)
+    batch, prefill = service.schedule()
+    service.postprocess(batch, [99], prefill)
+
+    waiting = Sequence(list(range(100, 116)),
+                       SamplingParams(max_tokens=1, ignore_eos=True))
+    service.add(waiting)
+    batch, prefill = service.schedule()
+    assert prefill and batch == [waiting]
+    service.postprocess(batch, [99], prefill)
+
+    batch, prefill = service.schedule()
+    assert prefill and batch == [waiting]
+    assert decoding.preemptions == 1
+    service.postprocess(batch, [99], prefill)
+    assert waiting.is_finished
+
+
+@pytest.mark.parametrize("policy", ["fcfs", "shortest", "slo"])
+def test_tight_kv_workload_eventually_finishes(policy):
+    service = scheduler(policy, blocks=8, budget=8)
+    rng = random.Random(7)
+    items = []
+    for request_id in range(12):
+        length = rng.randint(9, 40)
+        prompt = [1000 * request_id + token for token in range(length)]
+        item = Sequence(prompt, SamplingParams(max_tokens=rng.randint(2, 6),
+                                               ignore_eos=True), deadline_seconds=10)
+        service.add(item)
+        items.append(item)
+    for _ in range(500):
+        if service.is_finished():
+            break
+        batch, prefill = service.schedule()
+        service.postprocess(batch, [99] * len(batch), prefill)
+    assert service.is_finished()
+    assert all(item.is_finished for item in items)
 
 
 def test_shortest_and_aging_change_order():
@@ -128,3 +201,12 @@ def test_engine_emits_one_event_per_generated_token():
     assert second[0]["finished"]
     assert item.finish_time is not None
     assert engine.step_events() == ([], 0)
+
+
+def test_engine_rejects_request_exceeding_kv_capacity():
+    engine = object.__new__(LLMEngine)
+    engine.scheduler = scheduler(blocks=2)
+    engine.max_model_len = 100
+    with pytest.raises(ValueError, match="cannot fit in the KV cache"):
+        engine.add_request(list(range(16)), SamplingParams(max_tokens=2))
+    assert engine.scheduler.is_finished()

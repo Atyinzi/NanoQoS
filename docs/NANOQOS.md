@@ -42,7 +42,15 @@ python -m benchmarks.compare results/fcfs.json results/shortest.json results/slo
 
 ## 真实 GPU benchmark
 
-GPU 环境准备好后，先用小负载和 eager 模式冒烟：
+第一步：在 Linux/WSL2 的 NVIDIA GPU 环境检查依赖和模型文件。输出中的 `ready` 必须为 `true`；这是静态预检，不证明推理可运行或性能达标。
+
+```bash
+python -m benchmarks.preflight --model ./Qwen
+```
+
+本机 Windows 预检不通过：虽然 PyTorch 能识别 CUDA，但缺少 NCCL、Triton、FlashAttention，Transformers 版本也低于模型要求。不要在该环境填写 GPU 性能数字。
+
+预检通过后，先用小负载和 eager 模式冒烟：
 
 ```bash
 python -m benchmarks.run --backend gpu --model ./Qwen --eager \
@@ -52,7 +60,7 @@ python -m benchmarks.run --backend gpu --model ./Qwen --eager \
   --output results/gpu-smoke.json
 ```
 
-正式对照实验需要固定模型、GPU、PyTorch/CUDA 版本、随机种子、输入/输出长度分布、到达模式、预热方式以及 KV cache 配置。每个策略至少重复多次并报告分布；不能把一次 CPU 仿真或上游 README 的吞吐写成自己的 GPU 性能提升。
+结果 JSON 记录工作负载 SHA-256、Git revision/dirty 状态、设备与 CUDA/PyTorch 信息、模型配置哈希和显存峰值。比较脚本会拒绝不同工作负载指纹或代码 revision 的结果。正式对照实验仍需固定模型、GPU、PyTorch/CUDA 版本、随机种子、输入/输出长度分布、到达模式、预热方式以及 KV cache 配置。每个策略至少重复多次并报告分布；不能把一次 CPU 仿真或上游 README 的吞吐写成自己的 GPU 性能提升。
 
 ## HTTP 接口
 
@@ -94,7 +102,7 @@ HTTP handler / benchmark
 
 - `fcfs` 按入队顺序；`shortest` 按剩余 prefill token 近似排序；`slo` 按截止时间排序。`shortest` 与 `slo` 对等待时间加入 aging，已开始的 chunked prefill 优先完成。
 - 连续 prefill 最多运行 `max_consecutive_prefills` 轮，然后让正在运行的 decode 获得一轮调度机会。该值默认 4，可在 `Config` 中调整。
-- KV Cache 仍使用上游的 prefix hash 和引用计数机制。本扩展记录首次入队时可复用的 prompt token、cache 命中/淘汰、峰值使用 block、抢占次数和重算 token。
+- KV Cache 仍使用上游的 prefix hash 和引用计数机制。分块 prefill 现在只分配当前 chunk 所需的物理 block，后续 chunk 按需扩容，而非在请求首次调度时预占整个 prompt；不足时先让 decode 或已有 partial prefill 推进，必要时抢占并重试。本扩展记录首次入队时可复用的 prompt token、cache 命中/淘汰、峰值使用 block、抢占次数和重算 token。该机制已通过 CPU 状态测试，但仍需 GPU 正确性与性能验证。
 - 服务端用单个模型线程拥有 CUDA context；HTTP handler 通过线程安全队列提交请求，并使用有界信号量限制在途请求。
 
 ## 指标口径
@@ -111,6 +119,6 @@ HTTP handler / benchmark
 
 ## 目前验证与后续实验
 
-`python -m pytest tests -q` 在本机通过 9 个测试，覆盖 prefix cache 复用、调度顺序、aging、取消、抢占、指标、workload 可复现性、HTTP 补全及聊天流式输出。`results/` 的 CPU 仿真 JSON 是可本地重新生成的功能示例，不是求职简历中的 GPU 加速证据。
+`python -m pytest tests -q` 在本机通过 17 个测试，覆盖 prefix cache 复用、分块 KV 扩容、紧 KV 容量下三种策略的推进、调度顺序、aging、取消、抢占、指标、workload 可复现性、环境预检，以及 HTTP 补全和聊天流式输出。`results/` 的 CPU 仿真 JSON 是可本地重新生成的功能示例，不是求职简历中的 GPU 加速证据。
 
 在 GPU 上完成多轮真实对照后，再从结果文件提取简历数据。建议先分析瓶颈与负载范围；如果三种策略没有带来可重复的收益，就保留负面结果和适用边界。

@@ -54,8 +54,11 @@ class LLMEngine:
             prompt = self.tokenizer.encode(prompt)
         if len(prompt) + sampling_params.max_tokens > self.max_model_len:
             raise ValueError("prompt plus max_tokens exceeds max_model_len")
-        if len(prompt) > self.scheduler.block_size * len(self.scheduler.block_manager.blocks):
-            raise ValueError("prompt cannot fit in the KV cache")
+        kv_capacity = self.scheduler.block_size * len(self.scheduler.block_manager.blocks)
+        # The last generated token is returned without another decode step.
+        # All earlier tokens must fit in KV even if max_tokens is reached.
+        if len(prompt) + sampling_params.max_tokens - 1 > kv_capacity:
+            raise ValueError("prompt plus generation cannot fit in the KV cache")
         seq = Sequence(prompt, sampling_params, arrival_time=arrival_time,
                        deadline_seconds=deadline_seconds, priority=priority)
         self.scheduler.add(seq)

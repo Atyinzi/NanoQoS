@@ -61,7 +61,7 @@ class Scheduler:
 
         self.waiting = deque(sorted(self.waiting, key=lambda seq: (score(seq), seq.arrival_time, seq.seq_id)))
 
-    def schedule(self) -> tuple[list[Sequence], bool]:
+    def schedule(self, _retry_after_preemption: bool = False) -> tuple[list[Sequence], bool]:
         scheduled_seqs = []
         num_batched_tokens = 0
 
@@ -74,16 +74,24 @@ class Scheduler:
             if remaining == 0:
                 break
             if not seq.block_table:
-                num_cached_blocks = self.block_manager.can_allocate(seq)
-                if num_cached_blocks == -1:
-                    break
+                num_cached_blocks = self.block_manager.cached_prefix_blocks(seq)
                 num_tokens = seq.num_tokens - num_cached_blocks * self.block_size
+                max_tokens = self.block_manager.max_allocatable_tokens(seq, num_cached_blocks)
+                num_scheduled = min(num_tokens, remaining,
+                                    max_tokens - num_cached_blocks * self.block_size)
             else:
                 num_tokens = seq.num_tokens - seq.num_cached_tokens
-            if remaining < num_tokens and scheduled_seqs:  # only allow chunked prefill for the first seq
+                max_tokens = self.block_manager.max_allocatable_tokens(seq)
+                num_scheduled = min(num_tokens, remaining,
+                                    max_tokens - seq.num_cached_tokens)
+            if num_scheduled <= 0:
+                break
+            if num_scheduled < num_tokens and scheduled_seqs:  # only chunk the first seq
                 break
             if not seq.block_table:
-                self.block_manager.allocate(seq, num_cached_blocks)
+                self.block_manager.allocate(
+                    seq, num_cached_blocks,
+                    num_cached_blocks * self.block_size + num_scheduled)
                 if seq.preemptions == 0:
                     seq.prefix_cached_tokens = min(
                         num_cached_blocks * self.block_size, seq.num_prompt_tokens)
@@ -91,7 +99,10 @@ class Scheduler:
                     seq.recomputed_tokens += max(
                         0, seq._pending_recompute_tokens - num_cached_blocks * self.block_size)
                     seq._pending_recompute_tokens = 0
-            seq.num_scheduled_tokens = min(num_tokens, remaining)
+            else:
+                self.block_manager.append_blocks(
+                    seq, seq.num_cached_tokens + num_scheduled)
+            seq.num_scheduled_tokens = num_scheduled
             num_batched_tokens += seq.num_scheduled_tokens
             if seq.num_cached_tokens + seq.num_scheduled_tokens == seq.num_tokens:
                 seq.status = SequenceStatus.RUNNING
@@ -119,7 +130,15 @@ class Scheduler:
                 self.block_manager.may_append(seq)
                 scheduled_seqs.append(seq)
         if not scheduled_seqs:
-            raise RuntimeError("No request can progress with the available KV cache blocks")
+            # The decode pass may have evicted its last running sequence. Those
+            # released blocks can now let a waiting chunk advance immediately.
+            if self.waiting and not _retry_after_preemption:
+                return self.schedule(_retry_after_preemption=True)
+            raise RuntimeError(
+                "No request can progress with the available KV cache blocks: "
+                f"free={len(self.block_manager.free_block_ids)}, "
+                f"waiting={[(seq.seq_id, seq.num_cached_tokens, len(seq.block_table)) for seq in self.waiting]}, "
+                f"running={[(seq.seq_id, seq.num_cached_tokens, len(seq.block_table)) for seq in self.running]}")
         self.running.extendleft(reversed(scheduled_seqs))
         return scheduled_seqs, False
 
@@ -129,7 +148,12 @@ class Scheduler:
         seq.status = SequenceStatus.WAITING
         seq.is_prefill = True
         self.block_manager.deallocate(seq)
-        self.waiting.appendleft(seq)
+        # A partially prefetched waiter already owns KV blocks. Let it finish
+        # before this recomputation to avoid pinning all blocks indefinitely.
+        if any(waiting.block_table for waiting in self.waiting):
+            self.waiting.append(seq)
+        else:
+            self.waiting.appendleft(seq)
 
     def postprocess(self, seqs: list[Sequence], token_ids: list[int], is_prefill: bool):
         for seq, token_id in zip(seqs, token_ids):

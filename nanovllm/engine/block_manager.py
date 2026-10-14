@@ -60,10 +60,9 @@ class BlockManager:
         self.used_block_ids.remove(block_id)
         self.free_block_ids.append(block_id)
 
-    def can_allocate(self, seq: Sequence) -> int:
+    def cached_prefix_blocks(self, seq: Sequence) -> int:
         h = -1
         num_cached_blocks = 0
-        num_new_blocks = seq.num_blocks
         for i in range(seq.num_blocks - 1):
             token_ids = seq.block(i)
             h = self.compute_hash(token_ids, h)
@@ -71,14 +70,34 @@ class BlockManager:
             if block_id == -1 or self.blocks[block_id].token_ids != token_ids:
                 break
             num_cached_blocks += 1
-            if block_id in self.used_block_ids:
-                num_new_blocks -= 1
-        if len(self.free_block_ids) < num_new_blocks:
+        return num_cached_blocks
+
+    def max_allocatable_tokens(self, seq: Sequence, num_cached_blocks: int = 0) -> int:
+        """Token capacity for this sequence without evicting a referenced block."""
+        if seq.block_table:
+            blocks = len(seq.block_table) + len(self.free_block_ids)
+        else:
+            h = -1
+            shared_blocks = 0
+            for i in range(num_cached_blocks):
+                h = self.compute_hash(seq.block(i), h)
+                shared_blocks += self.hash_to_block_id[h] in self.used_block_ids
+            blocks = shared_blocks + len(self.free_block_ids)
+        return min(seq.num_tokens, blocks * self.block_size)
+
+    def can_allocate(self, seq: Sequence) -> int:
+        """Compatibility check for allocating the full sequence up front."""
+        num_cached_blocks = self.cached_prefix_blocks(seq)
+        if self.max_allocatable_tokens(seq, num_cached_blocks) < seq.num_tokens:
             return -1
         return num_cached_blocks
 
-    def allocate(self, seq: Sequence, num_cached_blocks: int):
+    def allocate(self, seq: Sequence, num_cached_blocks: int, target_tokens: int | None = None):
         assert not seq.block_table
+        if target_tokens is None:
+            target_tokens = seq.num_tokens
+        target_blocks = (target_tokens + self.block_size - 1) // self.block_size
+        assert num_cached_blocks <= target_blocks <= seq.num_blocks
         h = -1
         for i in range(num_cached_blocks):
             token_ids = seq.block(i)
@@ -94,9 +113,16 @@ class BlockManager:
                 self.peak_used_blocks = max(self.peak_used_blocks, len(self.used_block_ids))
             self.cache_hits += 1
             seq.block_table.append(block_id)
-        for i in range(num_cached_blocks, seq.num_blocks):
+        for i in range(num_cached_blocks, target_blocks):
             seq.block_table.append(self._allocate_block())
         seq.num_cached_tokens = num_cached_blocks * self.block_size
+
+    def append_blocks(self, seq: Sequence, target_tokens: int):
+        target_blocks = (target_tokens + self.block_size - 1) // self.block_size
+        assert len(seq.block_table) <= target_blocks <= seq.num_blocks
+        assert target_blocks - len(seq.block_table) <= len(self.free_block_ids)
+        for _ in range(len(seq.block_table), target_blocks):
+            seq.block_table.append(self._allocate_block())
 
     def deallocate(self, seq: Sequence):
         for block_id in reversed(seq.block_table):
