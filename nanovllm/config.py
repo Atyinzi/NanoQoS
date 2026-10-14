@@ -19,6 +19,7 @@ class Config:
     scheduler_policy: str = "fcfs"
     aging_seconds: float = 5.0
     max_consecutive_prefills: int = 4
+    attention_backend: str = "flash"
 
     def __post_init__(self):
         assert os.path.isdir(self.model)
@@ -27,5 +28,9 @@ class Config:
         assert self.scheduler_policy in {"fcfs", "shortest", "slo"}
         assert self.aging_seconds > 0
         assert self.max_consecutive_prefills > 0
+        if self.attention_backend not in {"flash", "sdpa"}:
+            raise ValueError("attention_backend must be flash or sdpa")
+        if self.attention_backend == "sdpa" and not self.enforce_eager:
+            raise ValueError("sdpa attention requires enforce_eager=True")
         self.hf_config = AutoConfig.from_pretrained(self.model)
         self.max_model_len = min(self.max_model_len, self.hf_config.max_position_embeddings)

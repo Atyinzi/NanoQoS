@@ -8,7 +8,7 @@
 
 ## 运行环境
 
-- GPU 路径需要 Linux 或 WSL2、可用的 NVIDIA CUDA/NCCL，以及本项目 `pyproject.toml` 中的依赖。原引擎在初始化时调用 NCCL、Triton 和 FlashAttention。
+- GPU 路径需要 Linux 或 WSL2、可用的 NVIDIA CUDA/NCCL、Triton 和 Transformers。原引擎默认使用 FlashAttention；选择 `--attention-backend sdpa --eager` 可跳过 `flash-attn`，按请求聚合 paged KV 后调用 PyTorch SDPA，仅用于小负载功能验收。
 - CPU 仿真路径只需要 Python 和 `pip install -e ".[test]"` 安装的轻量依赖。仿真会运行真实 `Scheduler`/`BlockManager`，以定时睡眠代替模型计算；它验证功能与指标管线，不代表 GPU 性能。
 - 本机 Windows Python 有 CUDA PyTorch 但没有 NCCL、Triton、FlashAttention，因此目前已验证 CPU 仿真与本地 HTTP 假模型集成测试，尚未取得真实 GPU 推理数字。
 - 本地 `Qwen/` 为 Qwen3-0.6B 权重目录；已在 `.gitignore` 中忽略，避免误提交大文件。
@@ -42,15 +42,24 @@ python -m benchmarks.compare results/fcfs.json results/shortest.json results/slo
 
 ## 真实 GPU benchmark
 
-第一步：在 Linux/WSL2 的 NVIDIA GPU 环境检查依赖和模型文件。输出中的 `ready` 必须为 `true`；这是静态预检，不证明推理可运行或性能达标。
+第一步：在 Linux/WSL2 的 NVIDIA GPU 环境检查依赖和模型文件。输出中的 `ready` 必须为 `true`；这是静态预检，不证明推理可运行或性能达标。按所选注意力后端指定预检参数：
 
 ```bash
-python -m benchmarks.preflight --model ./Qwen
+python -m benchmarks.preflight --model ./Qwen --attention-backend sdpa
 ```
 
-本机 Windows 预检不通过：虽然 PyTorch 能识别 CUDA，但缺少 NCCL、Triton、FlashAttention，Transformers 版本也低于模型要求。不要在该环境填写 GPU 性能数字。
+默认 `--attention-backend flash` 仍要求 FlashAttention。Windows 原生 Python 预检不通过；WSL 环境已安装 CUDA PyTorch、Triton 和 Transformers，SDPA 路径尚待真实冒烟，不要提前填写 GPU 性能数字。
 
-预检通过后，先用小负载和 eager 模式冒烟：
+预检通过后，先在 4 GB 显存笔记本上用 SDPA 和 eager 做极小负载冒烟；此命令已在 WSL 实测完成 1 个请求，跨多个 prefill chunk 后生成 2 个 token：
+
+```bash
+python -m benchmarks.run --backend gpu --model ./Qwen --attention-backend sdpa --eager \
+  --requests 1 --max-input 24 --max-output 2 --max-model-len 256 \
+  --max-num-batched-tokens 8 --max-num-seqs 1 --gpu-memory-utilization 0.9 \
+  --output results/gpu-sdpa-chunked-smoke.json
+```
+
+具备 FlashAttention 的 Linux GPU 环境再跑默认后端的小负载 eager 冒烟：
 
 ```bash
 python -m benchmarks.run --backend gpu --model ./Qwen --eager \
@@ -60,7 +69,7 @@ python -m benchmarks.run --backend gpu --model ./Qwen --eager \
   --output results/gpu-smoke.json
 ```
 
-结果 JSON 记录工作负载 SHA-256、Git revision/dirty 状态、设备与 CUDA/PyTorch 信息、模型配置哈希和显存峰值。比较脚本会拒绝不同工作负载指纹或代码 revision 的结果。正式对照实验仍需固定模型、GPU、PyTorch/CUDA 版本、随机种子、输入/输出长度分布、到达模式、预热方式以及 KV cache 配置。每个策略至少重复多次并报告分布；不能把一次 CPU 仿真或上游 README 的吞吐写成自己的 GPU 性能提升。
+结果 JSON 记录工作负载 SHA-256、Git revision/dirty 状态、设备与 CUDA/PyTorch 信息、模型配置哈希、注意力后端和显存峰值。比较脚本会拒绝不同注意力后端、工作负载指纹或代码 revision 的结果。正式对照实验仍需固定模型、GPU、PyTorch/CUDA 版本、随机种子、输入/输出长度分布、到达模式、预热方式以及 KV cache 配置。SDPA 是逐请求 gather 的参考路径，不能与 FlashAttention 的性能数字混用；每个策略至少重复多次并报告分布。
 
 ## HTTP 接口
 
@@ -69,6 +78,8 @@ python -m nanovllm.server --model ./Qwen --host 127.0.0.1 --port 8000 \
   --policy slo --max-pending 32 --max-model-len 2048 \
   --max-num-seqs 16 --max-num-batched-tokens 1024 --eager
 ```
+
+上面是默认 FlashAttention 后端。若只做本机 SDPA 功能验证，可改用 `--attention-backend sdpa --eager` 并降低长度与并发；真实模型 HTTP 路径仍需单独验收。
 
 支持：
 
@@ -119,6 +130,6 @@ HTTP handler / benchmark
 
 ## 目前验证与后续实验
 
-`python -m pytest tests -q` 在本机通过 17 个测试，覆盖 prefix cache 复用、分块 KV 扩容、紧 KV 容量下三种策略的推进、调度顺序、aging、取消、抢占、指标、workload 可复现性、环境预检，以及 HTTP 补全和聊天流式输出。`results/` 的 CPU 仿真 JSON 是可本地重新生成的功能示例，不是求职简历中的 GPU 加速证据。
+`python -m pytest tests -q` 在本机通过 21 个测试（其中 3 个 SDPA 数值测试需要 PyTorch），覆盖 prefix cache 复用、分块 KV 扩容、紧 KV 容量下三种策略的推进、调度顺序、aging、取消、抢占、指标、workload 可复现性、环境预检、SDPA 因果掩码与分页 KV，以及 HTTP 补全和聊天流式输出。`results/` 的 CPU 仿真 JSON 是可本地重新生成的功能示例，不是求职简历中的 GPU 加速证据。
 
 在 GPU 上完成多轮真实对照后，再从结果文件提取简历数据。建议先分析瓶颈与负载范围；如果三种策略没有带来可重复的收益，就保留负面结果和适用边界。

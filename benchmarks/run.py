@@ -94,6 +94,7 @@ def run(args):
     else:
         from nanovllm import LLM
         engine = LLM(str(args.model), enforce_eager=args.eager, scheduler_policy=args.policy,
+                     attention_backend=args.attention_backend,
                      aging_seconds=args.aging_seconds,
                      max_consecutive_prefills=args.max_consecutive_prefills,
                      max_num_seqs=args.max_num_seqs,
@@ -149,6 +150,7 @@ def run(args):
                        "block_size": (scheduler or engine.scheduler).block_manager.block_size,
                        "num_blocks": len((scheduler or engine.scheduler).block_manager.blocks),
                        "eager": args.eager,
+                       "attention_backend": args.attention_backend if engine else None,
                        "gpu_memory_utilization": args.gpu_memory_utilization if engine else None,
                        "prefill_seconds": args.prefill_seconds if scheduler else None,
                        "decode_seconds": args.decode_seconds if scheduler else None},
@@ -203,6 +205,7 @@ def main():
     parser.add_argument("--max-model-len", type=int, default=2048)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.8)
     parser.add_argument("--eager", action="store_true")
+    parser.add_argument("--attention-backend", choices=["flash", "sdpa"], default="flash")
     parser.add_argument("--block-size", type=int, default=256)
     parser.add_argument("--num-blocks", type=int, default=256)
     parser.add_argument("--aging-seconds", type=float, default=5.0)
@@ -213,6 +216,8 @@ def main():
     args = parser.parse_args()
     if args.backend == "gpu" and args.max_input + args.max_output > args.max_model_len:
         parser.error("max-input + max-output exceeds max-model-len")
+    if args.backend == "gpu" and args.attention_backend == "sdpa" and not args.eager:
+        parser.error("sdpa attention requires --eager")
     if args.backend == "synthetic" and args.max_input + args.max_output - 1 > args.block_size * args.num_blocks:
         parser.error("largest request cannot fit in the synthetic KV cache")
     if args.backend == "synthetic" and args.shared_prefix and args.shared_prefix < args.block_size:

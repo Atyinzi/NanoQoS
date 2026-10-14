@@ -23,7 +23,9 @@ def inspect_model(model: Path) -> dict[str, bool]:
     }
 
 
-def inspect_environment(model: Path) -> dict:
+def inspect_environment(model: Path, attention_backend: str = "flash") -> dict:
+    if attention_backend not in {"flash", "sdpa"}:
+        raise ValueError("attention_backend must be flash or sdpa")
     checks = {"linux_or_wsl": platform.system() == "Linux"}
     checks.update(inspect_model(model))
     versions = {}
@@ -52,7 +54,9 @@ def inspect_environment(model: Path) -> dict:
     except (ImportError, OSError):
         checks["cuda_available"] = False
         checks["nccl_available"] = False
-    return {"ready": all(checks.values()), "checks": checks,
+    required = [name for name in checks if attention_backend == "flash" or name != "flash-attn"]
+    return {"ready": all(checks[name] for name in required), "checks": checks,
+            "required_checks": required, "attention_backend": attention_backend,
             "versions": versions, "gpu": gpu,
             "model": str(model.resolve()), "platform": platform.platform()}
 
@@ -60,8 +64,9 @@ def inspect_environment(model: Path) -> dict:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, default=Path("Qwen"))
+    parser.add_argument("--attention-backend", choices=["flash", "sdpa"], default="flash")
     args = parser.parse_args(argv)
-    report = inspect_environment(args.model)
+    report = inspect_environment(args.model, args.attention_backend)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report["ready"] else 2
 

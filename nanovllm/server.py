@@ -352,13 +352,16 @@ def main():
     parser.add_argument("--max-num-batched-tokens", type=int, default=1024)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.8)
     parser.add_argument("--eager", action="store_true")
+    parser.add_argument("--attention-backend", choices=["flash", "sdpa"], default="flash")
     args = parser.parse_args()
+    if args.attention_backend == "sdpa" and not args.eager:
+        parser.error("sdpa attention requires --eager")
     logging.basicConfig(level=logging.INFO)
     service = Service(args.model, args.max_pending, scheduler_policy=args.policy,
                       max_model_len=args.max_model_len, max_num_seqs=args.max_num_seqs,
                       max_num_batched_tokens=args.max_num_batched_tokens,
                       gpu_memory_utilization=args.gpu_memory_utilization,
-                      enforce_eager=args.eager)
+                      enforce_eager=args.eager, attention_backend=args.attention_backend)
     server = ThreadingHTTPServer((args.host, args.port), make_handler(service, args.model))
     try:
         LOG.info("Serving %s on http://%s:%s", args.model, args.host, args.port)

@@ -3,8 +3,8 @@ from torch import nn
 import triton
 import triton.language as tl
 
-from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
 from nanovllm.utils.context import get_context
+from nanovllm.layers.sdpa_attention import sdpa_prefill, sdpa_decode
 
 
 @triton.jit
@@ -54,6 +54,7 @@ class Attention(nn.Module):
         self.head_dim = head_dim
         self.scale = scale
         self.num_kv_heads = num_kv_heads
+        self.backend = "flash"
         self.k_cache = self.v_cache = torch.tensor([])
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
@@ -61,6 +62,14 @@ class Attention(nn.Module):
         k_cache, v_cache = self.k_cache, self.v_cache
         if k_cache.numel() and v_cache.numel():
             store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
+        if self.backend == "sdpa":
+            if context.is_prefill:
+                return sdpa_prefill(q, k, v, k_cache, v_cache,
+                                    context.host_cu_seqlens_q, context.host_cu_seqlens_k,
+                                    context.block_tables, self.scale)
+            return sdpa_decode(q, k_cache, v_cache, context.host_context_lens,
+                               context.block_tables, self.scale)
+        from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
         if context.is_prefill:
             if context.block_tables is not None:    # prefix cache
                 k, v = k_cache, v_cache
