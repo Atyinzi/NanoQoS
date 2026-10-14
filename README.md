@@ -49,7 +49,7 @@ python -m nanovllm.server --model ./Qwen --host 127.0.0.1 --port 8000 --eager
 
 ## 验证范围
 
-本地已通过 17 个 CPU 单元／HTTP 集成测试，并运行 CPU 合成负载。[2026-10-13 的 CI 验证](https://github.com/Atyinzi/NanoQoS/actions/runs/38405730903)在 Linux/Windows、Python 3.11/3.12 四组环境全部通过的是此前版本；本次改动的 CI 状态须以新提交的 Actions 为准。GPU 路径尚未在本机验收：当前 Windows Python 有 CUDA PyTorch，但缺少 NCCL、Triton 和 FlashAttention。因此本仓库目前**没有可声称的真实 GPU 加速或 SLO 改善数字**；待 GPU 实验完成后再补充设备、模型、负载、重复次数与原始结果。详细验收矩阵见 [验证记录](docs/VALIDATION.md)。
+本地已通过 17 个 CPU 单元／HTTP 集成测试，并运行 CPU 合成负载。[本次代码的 CI 验证](https://github.com/Atyinzi/NanoQoS/actions/runs/38566582283)在 Linux/Windows、Python 3.11/3.12 四组环境全部通过。GPU 路径尚未在本机验收：当前 Windows Python 有 CUDA PyTorch，但缺少 NCCL、Triton 和 FlashAttention。因此本仓库目前**没有可声称的真实 GPU 加速或 SLO 改善数字**；待 GPU 实验完成后再补充设备、模型、负载、重复次数与原始结果。详细验收矩阵见 [验证记录](docs/VALIDATION.md)。
 
 ## 来源与许可
 
